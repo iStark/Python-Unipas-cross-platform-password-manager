@@ -9,9 +9,10 @@ Features
 - AES-GCM encryption with a key derived via scrypt (from the PIN + random salt).
 - SQLite database stores ONLY ciphertext (per-record JSON blob) + nonce. No plaintext fields on disk.
 - Tkinter GUI with a table view and an add form:
-  Columns: ID / Название сайта / Login / Email / Телефон / Password / Description
-- Buttons: Добавить, Показать/Скрыть пароль, Копировать пароль, Копировать email,
-           Копировать название сайта, Редактировать, Удалить запись, Обновить.
+  Columns (localized): ID / Site / Login / Email / Phone / Password / Description
+- Buttons (localized): Add, Show/Hide password, Copy password, Copy email,
+           Copy site title, Edit, Delete, Refresh, Settings.
+- Settings dialog: choose and save UI language (ru/en).
 
 Dependencies
     pip install cryptography
@@ -41,6 +42,7 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 
 APP_NAME = "UniPass"
+
 def _app_dir() -> Path:
     # Папка, где лежит exe (или .py, если не собрано)
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
@@ -50,14 +52,149 @@ def _app_dir() -> Path:
 DB_PATH = _app_dir() / "unipass.db"
 SCHEMA_VERSION = 1
 
-# Scrypt parameters (balanced for desktop; adjust if desired)
-SCRYPT_N = 2**15  # CPU/memory cost (32768)
+# Scrypt parameters
+SCRYPT_N = 2**15
 SCRYPT_R = 8
 SCRYPT_P = 1
-KEY_LEN = 32  # AES-256 key
-NONCE_LEN = 12  # AES-GCM recommended nonce length
+KEY_LEN = 32
+NONCE_LEN = 12
 
 PIN_REGEX = re.compile(r"^\d{6}$")
+
+# -----------------------------
+# I18N
+# -----------------------------
+LANG = "en"  # будет переопределено из БД meta.lang при запуске
+
+L10N: Dict[str, Dict[str, str]] = {
+    "ru": {
+        # Buttons / labels (top)
+        "refresh": "Обновить",
+        "reveal": "Показать/Скрыть пароль",
+        "copy_pwd": "Копировать пароль",
+        "copy_email": "Копировать email",
+        "copy_site": "Копировать название сайта",
+        "edit": "Редактировать",
+        "delete": "Удалить запись",
+        "settings": "Настройки",
+
+        # Table headings
+        "col_id": "ID",
+        "col_site": "Название сайта",
+        "col_login": "Login",
+        "col_email": "Email",
+        "col_phone": "Телефон",
+        "col_password": "Password",
+        "col_desc": "Description",
+
+        # Add form
+        "add_frame": "Добавить запись",
+        "site_label": "Название сайта:",
+        "login_label": "Login:",
+        "email_label": "Email:",
+        "phone_label": "Телефон:",
+        "password_label": "Password:",
+        "desc_label": "Description:",
+        "add": "Добавить",
+
+        # Messages
+        "select_row": "Выберите запись в таблице",
+        "pwd_copied": "Пароль скопирован в буфер обмена",
+        "email_copied": "Email скопирован в буфер обмена",
+        "site_copied": "Название сайта скопировано в буфер обмена",
+        "decrypt_failed": "Не удалось расшифровать запись",
+        "enter_site": "Введите название сайта",
+        "update_done": "Запись обновлена",
+        "delete_confirm": "Удалить запись ID {id}?",
+        "too_many_attempts": "Слишком много неудачных попыток. Выход.",
+        "wrong_pin": "Неверный PIN (попытка {n}/3)",
+        "kdf_broken": "Поврежденные метаданные KDF",
+
+        # PIN dialogs
+        "pin_create_title": "Создайте 6-значный PIN для шифрования",
+        "pin_enter_title": "Введите 6-значный PIN",
+        "pin_label": "PIN (6 цифр):",
+        "pin_repeat": "Повторите PIN:",
+        "pin_must_6": "PIN должен состоять из 6 цифр",
+        "pin_mismatch": "PIN не совпадает",
+
+        # Settings dialog
+        "settings_title": "Настройки",
+        "lang_label": "Язык интерфейса:",
+        "lang_ru": "Русский",
+        "lang_en": "English",
+        "ok": "OK",
+        "cancel": "Отмена",
+
+        # Context menu
+        "ctx_copy": "Копировать",
+        "ctx_paste": "Вставить",
+        "ctx_cut": "Вырезать",
+        "ctx_select_all": "Выделить всё",
+    },
+    "en": {
+        "refresh": "Refresh",
+        "reveal": "Show/Hide password",
+        "copy_pwd": "Copy password",
+        "copy_email": "Copy email",
+        "copy_site": "Copy site title",
+        "edit": "Edit",
+        "delete": "Delete",
+        "settings": "Settings",
+
+        "col_id": "ID",
+        "col_site": "Site",
+        "col_login": "Login",
+        "col_email": "Email",
+        "col_phone": "Phone",
+        "col_password": "Password",
+        "col_desc": "Description",
+
+        "add_frame": "Add entry",
+        "site_label": "Site:",
+        "login_label": "Login:",
+        "email_label": "Email:",
+        "phone_label": "Phone:",
+        "password_label": "Password:",
+        "desc_label": "Description:",
+        "add": "Add",
+
+        "select_row": "Select a row in the table",
+        "pwd_copied": "Password copied to clipboard",
+        "email_copied": "Email copied to clipboard",
+        "site_copied": "Site title copied to clipboard",
+        "decrypt_failed": "Failed to decrypt entry",
+        "enter_site": "Enter site name",
+        "update_done": "Entry updated",
+        "delete_confirm": "Delete entry ID {id}?",
+        "too_many_attempts": "Too many failed attempts. Exiting.",
+        "wrong_pin": "Wrong PIN (attempt {n}/3)",
+        "kdf_broken": "Corrupted KDF metadata",
+
+        "pin_create_title": "Create a 6-digit PIN for encryption",
+        "pin_enter_title": "Enter 6-digit PIN",
+        "pin_label": "PIN (6 digits):",
+        "pin_repeat": "Repeat PIN:",
+        "pin_must_6": "PIN must be 6 digits",
+        "pin_mismatch": "PINs do not match",
+
+        "settings_title": "Settings",
+        "lang_label": "Interface language:",
+        "lang_ru": "Русский",
+        "lang_en": "English",
+        "ok": "OK",
+        "cancel": "Cancel",
+
+        "ctx_copy": "Copy",
+        "ctx_paste": "Paste",
+        "ctx_cut": "Cut",
+        "ctx_select_all": "Select all",
+    },
+}
+
+def t(key: str) -> str:
+    # Возвращаем ключ, если перевода нет
+    return L10N.get(LANG, L10N["en"]).get(key, key)
 
 
 # -----------------------------
@@ -168,7 +305,6 @@ class Store:
             );
             """
         )
-        # Initialize schema_info if empty
         cur.execute("SELECT COUNT(*) as c FROM schema_info")
         if cur.fetchone()["c"] == 0:
             cur.execute("INSERT INTO schema_info(version) VALUES (?)", (SCHEMA_VERSION,))
@@ -231,22 +367,22 @@ class PinDialog(simpledialog.Dialog):
 
     def body(self, master):
         ttk.Label(master, text=self.prompt).grid(row=0, column=0, columnspan=2, pady=(0, 6))
-        ttk.Label(master, text="PIN (6 цифр):").grid(row=1, column=0, sticky="e")
+        ttk.Label(master, text=t("pin_label")).grid(row=1, column=0, sticky="e")
         e1 = ttk.Entry(master, textvariable=self.pin_var, show="•", width=20)
         e1.grid(row=1, column=1, pady=2)
         e1.focus_set()
         if self.confirm:
-            ttk.Label(master, text="Повторите PIN:").grid(row=2, column=0, sticky="e")
+            ttk.Label(master, text=t("pin_repeat")).grid(row=2, column=0, sticky="e")
             ttk.Entry(master, textvariable=self.pin2_var, show="•", width=20).grid(row=2, column=1, pady=2)
         return e1
 
     def validate(self):
         pin = self.pin_var.get().strip()
         if not PIN_REGEX.match(pin):
-            messagebox.showerror(APP_NAME, "PIN должен состоять из 6 цифр")
+            messagebox.showerror(APP_NAME, t("pin_must_6"))
             return False
         if self.confirm and pin != self.pin2_var.get().strip():
-            messagebox.showerror(APP_NAME, "PIN не совпадает")
+            messagebox.showerror(APP_NAME, t("pin_mismatch"))
             return False
         return True
 
@@ -263,7 +399,6 @@ class EditDialog(simpledialog.Dialog):
     def __init__(self, parent, title: str, data: Dict[str, Any]):
         self.data_in = data
         self.result_data: Optional[Dict[str, Any]] = None
-        # vars
         self.var_site = tk.StringVar(value=data.get("site", ""))
         self.var_login = tk.StringVar(value=data.get("login", ""))
         self.var_email = tk.StringVar(value=data.get("email", ""))
@@ -276,30 +411,28 @@ class EditDialog(simpledialog.Dialog):
         master.columnconfigure(1, weight=1)
         master.columnconfigure(3, weight=1)
 
-        ttk.Label(master, text="Название сайта:").grid(row=0, column=0, sticky="e", padx=4, pady=4)
+        ttk.Label(master, text=t("site_label")[:-1]).grid(row=0, column=0, sticky="e", padx=4, pady=4)
         ttk.Entry(master, textvariable=self.var_site, width=28).grid(row=0, column=1, sticky="we", padx=4, pady=4)
 
-        ttk.Label(master, text="Login:").grid(row=0, column=2, sticky="e", padx=4, pady=4)
+        ttk.Label(master, text=t("login_label")[:-1]).grid(row=0, column=2, sticky="e", padx=4, pady=4)
         ttk.Entry(master, textvariable=self.var_login, width=24).grid(row=0, column=3, sticky="we", padx=4, pady=4)
 
-        ttk.Label(master, text="Email:").grid(row=1, column=0, sticky="e", padx=4, pady=4)
+        ttk.Label(master, text=t("email_label")[:-1]).grid(row=1, column=0, sticky="e", padx=4, pady=4)
         ttk.Entry(master, textvariable=self.var_email, width=28).grid(row=1, column=1, sticky="we", padx=4, pady=4)
 
-        ttk.Label(master, text="Телефон:").grid(row=1, column=2, sticky="e", padx=4, pady=4)
+        ttk.Label(master, text=t("phone_label")[:-1]).grid(row=1, column=2, sticky="e", padx=4, pady=4)
         ttk.Entry(master, textvariable=self.var_phone, width=24).grid(row=1, column=3, sticky="we", padx=4, pady=4)
 
-        ttk.Label(master, text="Password:").grid(row=2, column=0, sticky="e", padx=4, pady=4)
+        ttk.Label(master, text=t("password_label")[:-1]).grid(row=2, column=0, sticky="e", padx=4, pady=4)
         ttk.Entry(master, textvariable=self.var_pass, width=28, show="•").grid(row=2, column=1, sticky="we", padx=4, pady=4)
 
-        ttk.Label(master, text="Description:").grid(row=2, column=2, sticky="e", padx=4, pady=4)
+        ttk.Label(master, text=t("desc_label")[:-1]).grid(row=2, column=2, sticky="e", padx=4, pady=4)
         ttk.Entry(master, textvariable=self.var_desc, width=24).grid(row=2, column=3, sticky="we", padx=4, pady=4)
-
-        # enable clipboard support in dialog entries (inherits from parent class bindings)
         return None
 
     def validate(self):
         if not self.var_site.get().strip():
-            messagebox.showerror(APP_NAME, "Введите название сайта")
+            messagebox.showerror(APP_NAME, t("enter_site"))
             return False
         return True
 
@@ -312,6 +445,41 @@ class EditDialog(simpledialog.Dialog):
             "password": self.var_pass.get(),
             "description": self.var_desc.get().strip(),
         }
+
+
+# -----------------------------
+# Settings dialog
+# -----------------------------
+class SettingsDialog(simpledialog.Dialog):
+    def __init__(self, parent, current_lang: str):
+        self.selected_lang = tk.StringVar(value=current_lang)
+        super().__init__(parent, t("settings_title"))
+
+    def body(self, master):
+        ttk.Label(master, text=t("lang_label")).grid(row=0, column=0, sticky="w", padx=6, pady=6)
+
+        # Combobox with human-readable labels, but we store code
+        self.cb = ttk.Combobox(master, state="readonly", width=18, values=[t("lang_ru"), t("lang_en")])
+        self.cb.grid(row=0, column=1, sticky="w", padx=6, pady=6)
+        # map current code -> label
+        if LANG == "ru":
+            self.cb.set(t("lang_ru"))
+        else:
+            self.cb.set(t("lang_en"))
+        return self.cb
+
+    def buttonbox(self):
+        box = ttk.Frame(self)
+        ok_btn = ttk.Button(box, text=t("ok"), width=10, command=self.ok)
+        cancel_btn = ttk.Button(box, text=t("cancel"), width=10, command=self.cancel)
+        ok_btn.pack(side=tk.LEFT, padx=5, pady=5)
+        cancel_btn.pack(side=tk.LEFT, padx=5, pady=5)
+        box.pack()
+
+    def apply(self):
+        label = self.cb.get()
+        code = "ru" if label == t("lang_ru") else "en"
+        self.result = code
 
 
 # -----------------------------
@@ -331,6 +499,9 @@ class PasswordManagerApp(tk.Tk):
         self.crypto: Optional[CryptoManager] = None
         self._unlocked = False
 
+        # Load language from DB (default ru)
+        self._init_language()
+
         # Unlock flow
         self.unlock_or_init()
         if not self._unlocked:
@@ -341,13 +512,32 @@ class PasswordManagerApp(tk.Tk):
         self._build_ui()
         self.refresh_table()
 
+    # --- Language init/save ---
+    def _init_language(self):
+        global LANG
+        lang_from_db = self.store.get_meta("lang")
+        if lang_from_db in ("ru", "en"):
+            LANG = lang_from_db
+        else:
+            # default ru; save it to meta so дальнейшие запуски читают явно
+            self.store.set_meta("lang", "ru")
+            LANG = "ru"
+
+    def set_language(self, code: str):
+        global LANG
+        if code not in ("ru", "en"):
+            return
+        LANG = code
+        self.store.set_meta("lang", code)
+        self.apply_locale()
+
     # --- Unlock / Initialize ---
     def unlock_or_init(self):
         meta = self.store.all_meta()
         salt_b64 = meta.get("kdf_salt")
         if not salt_b64:
             # First run -> create PIN & initialize meta
-            dlg = PinDialog(self, APP_NAME, "Создайте 6-значный PIN для шифрования", confirm=True)
+            dlg = PinDialog(self, APP_NAME, t("pin_create_title"), confirm=True)
             pin = dlg.result
             if not pin:
                 return
@@ -378,12 +568,12 @@ class PasswordManagerApp(tk.Tk):
                 p=int(self.store.get_meta("kdf_p") or SCRYPT_P),
             )
         except Exception:
-            messagebox.showerror(APP_NAME, "Поврежденные метаданные KDF")
+            messagebox.showerror(APP_NAME, t("kdf_broken"))
             return
 
         attempts = 0
         while attempts < 3:
-            dlg = PinDialog(self, APP_NAME, "Введите 6-значный PIN")
+            dlg = PinDialog(self, APP_NAME, t("pin_enter_title"))
             pin = dlg.result
             if not pin:
                 return
@@ -400,8 +590,8 @@ class PasswordManagerApp(tk.Tk):
             except Exception:
                 pass
             attempts += 1
-            messagebox.showerror(APP_NAME, f"Неверный PIN (попытка {attempts}/3)")
-        messagebox.showwarning(APP_NAME, "Слишком много неудачных попыток. Выход.")
+            messagebox.showerror(APP_NAME, t("wrong_pin").format(n=attempts))
+        messagebox.showwarning(APP_NAME, t("too_many_attempts"))
 
     # --- UI Building ---
     def _build_ui(self):
@@ -409,62 +599,57 @@ class PasswordManagerApp(tk.Tk):
         top = ttk.Frame(self)
         top.pack(side=tk.TOP, fill=tk.X, padx=8, pady=6)
 
-        self.btn_refresh = ttk.Button(top, text="Обновить", command=self.refresh_table)
+        self.btn_refresh = ttk.Button(top, command=self.refresh_table)
         self.btn_refresh.pack(side=tk.LEFT)
 
-        self.btn_reveal = ttk.Button(top, text="Показать/Скрыть пароль", command=self.toggle_reveal_selected)
+        self.btn_reveal = ttk.Button(top, command=self.toggle_reveal_selected)
         self.btn_reveal.pack(side=tk.LEFT, padx=(6, 0))
 
-        self.btn_copy_pwd = ttk.Button(top, text="Копировать пароль", command=self.copy_password_selected)
+        self.btn_copy_pwd = ttk.Button(top, command=self.copy_password_selected)
         self.btn_copy_pwd.pack(side=tk.LEFT, padx=(6, 0))
 
-        self.btn_copy_email = ttk.Button(top, text="Копировать email", command=self.copy_email_selected)
+        self.btn_copy_email = ttk.Button(top, command=self.copy_email_selected)
         self.btn_copy_email.pack(side=tk.LEFT, padx=(6, 0))
 
-        self.btn_copy_site = ttk.Button(top, text="Копировать название сайта", command=self.copy_site_selected)
+        self.btn_copy_site = ttk.Button(top, command=self.copy_site_selected)
         self.btn_copy_site.pack(side=tk.LEFT, padx=(6, 0))
 
-        self.btn_edit = ttk.Button(top, text="Редактировать", command=self.edit_selected)
+        self.btn_edit = ttk.Button(top, command=self.edit_selected)
         self.btn_edit.pack(side=tk.LEFT, padx=(6, 0))
 
-        self.btn_delete = ttk.Button(top, text="Удалить запись", command=self.delete_selected)
+        self.btn_delete = ttk.Button(top, command=self.delete_selected)
         self.btn_delete.pack(side=tk.LEFT, padx=(6, 0))
+
+        # Settings button
+        self.btn_settings = ttk.Button(top, command=self.open_settings)
+        self.btn_settings.pack(side=tk.LEFT, padx=(6, 0))
 
         # Table
         columns = ("id", "site", "login", "email", "phone", "password", "desc")
         self.tree = ttk.Treeview(self, columns=columns, show="headings", height=12)
-        self.tree.heading("id", text="ID")
-        self.tree.heading("site", text="Название сайта")
-        self.tree.heading("login", text="Login")
-        self.tree.heading("email", text="Email")
-        self.tree.heading("phone", text="Телефон")
-        self.tree.heading("password", text="Password")
-        self.tree.heading("desc", text="Description")
-
-        self.tree.column("id", width=60, anchor=tk.CENTER)
-        self.tree.column("site", width=200)
-        self.tree.column("login", width=160)
-        self.tree.column("email", width=200)
-        self.tree.column("phone", width=140)
-        self.tree.column("password", width=140, anchor=tk.CENTER)
-        self.tree.column("desc", width=260)
-
         self.tree.pack(fill=tk.BOTH, expand=True, padx=8)
 
         # Add form
-        form = ttk.LabelFrame(self, text="Добавить запись")
-        form.pack(side=tk.BOTTOM, fill=tk.X, padx=8, pady=8)
+        self.form = ttk.LabelFrame(self)
+        self.form.pack(side=tk.BOTTOM, fill=tk.X, padx=8, pady=8)
 
-        # Row 0
-        ttk.Label(form, text="Название сайта:").grid(row=0, column=0, sticky="e", padx=4, pady=4)
-        ttk.Label(form, text="Login:").grid(row=0, column=2, sticky="e", padx=4, pady=4)
-        ttk.Label(form, text="Email:").grid(row=0, column=4, sticky="e", padx=4, pady=4)
+        # Labels (store refs to update on language change)
+        self.lbl_site = ttk.Label(self.form)
+        self.lbl_login = ttk.Label(self.form)
+        self.lbl_email = ttk.Label(self.form)
+        self.lbl_phone = ttk.Label(self.form)
+        self.lbl_password = ttk.Label(self.form)
+        self.lbl_desc = ttk.Label(self.form)
 
-        # Row 1
-        ttk.Label(form, text="Телефон:").grid(row=1, column=0, sticky="e", padx=4, pady=4)
-        ttk.Label(form, text="Password:").grid(row=1, column=2, sticky="e", padx=4, pady=4)
-        ttk.Label(form, text="Description:").grid(row=1, column=4, sticky="e", padx=4, pady=4)
+        # Grid labels
+        self.lbl_site.grid(row=0, column=0, sticky="e", padx=4, pady=4)
+        self.lbl_login.grid(row=0, column=2, sticky="e", padx=4, pady=4)
+        self.lbl_email.grid(row=0, column=4, sticky="e", padx=4, pady=4)
+        self.lbl_phone.grid(row=1, column=0, sticky="e", padx=4, pady=4)
+        self.lbl_password.grid(row=1, column=2, sticky="e", padx=4, pady=4)
+        self.lbl_desc.grid(row=1, column=4, sticky="e", padx=4, pady=4)
 
+        # Variables
         self.var_site = tk.StringVar()
         self.var_login = tk.StringVar()
         self.var_email = tk.StringVar()
@@ -473,20 +658,20 @@ class PasswordManagerApp(tk.Tk):
         self.var_desc = tk.StringVar()
 
         # Inputs
-        ttk.Entry(form, textvariable=self.var_site, width=28).grid(row=0, column=1, sticky="we", padx=4, pady=4)
-        ttk.Entry(form, textvariable=self.var_login, width=22).grid(row=0, column=3, sticky="we", padx=4, pady=4)
-        ttk.Entry(form, textvariable=self.var_email, width=28).grid(row=0, column=5, sticky="we", padx=4, pady=4)
+        ttk.Entry(self.form, textvariable=self.var_site, width=28).grid(row=0, column=1, sticky="we", padx=4, pady=4)
+        ttk.Entry(self.form, textvariable=self.var_login, width=22).grid(row=0, column=3, sticky="we", padx=4, pady=4)
+        ttk.Entry(self.form, textvariable=self.var_email, width=28).grid(row=0, column=5, sticky="we", padx=4, pady=4)
 
-        ttk.Entry(form, textvariable=self.var_phone, width=22).grid(row=1, column=1, sticky="we", padx=4, pady=4)
-        ttk.Entry(form, textvariable=self.var_pass, width=22, show="•").grid(row=1, column=3, sticky="we", padx=4, pady=4)
-        ttk.Entry(form, textvariable=self.var_desc, width=28).grid(row=1, column=5, sticky="we", padx=4, pady=4)
+        ttk.Entry(self.form, textvariable=self.var_phone, width=22).grid(row=1, column=1, sticky="we", padx=4, pady=4)
+        ttk.Entry(self.form, textvariable=self.var_pass, width=22, show="•").grid(row=1, column=3, sticky="we", padx=4, pady=4)
+        ttk.Entry(self.form, textvariable=self.var_desc, width=28).grid(row=1, column=5, sticky="we", padx=4, pady=4)
 
-        self.btn_add = ttk.Button(form, text="Добавить", command=self.add_entry)
+        self.btn_add = ttk.Button(self.form, command=self.add_entry)
         self.btn_add.grid(row=0, column=6, rowspan=2, padx=6)
 
         # Column weights
         for c in (1, 3, 5):
-            form.grid_columnconfigure(c, weight=1)
+            self.form.grid_columnconfigure(c, weight=1)
 
         # Bindings
         self.tree.bind("<Double-1>", self.on_double_click)
@@ -497,9 +682,59 @@ class PasswordManagerApp(tk.Tk):
         # Clipboard support (Windows-safe)
         self._install_clipboard_support()
 
-    # --- Clipboard helpers (fix Ctrl+V etc.) ---
+        # Apply localized texts
+        self.apply_locale()
+
+    def apply_locale(self):
+        # Buttons
+        self.btn_refresh.config(text=t("refresh"))
+        self.btn_reveal.config(text=t("reveal"))
+        self.btn_copy_pwd.config(text=t("copy_pwd"))
+        self.btn_copy_email.config(text=t("copy_email"))
+        self.btn_copy_site.config(text=t("copy_site"))
+        self.btn_edit.config(text=t("edit"))
+        self.btn_delete.config(text=t("delete"))
+        self.btn_settings.config(text=t("settings"))
+
+        # Table headings
+        self.tree.heading("id", text=t("col_id"))
+        self.tree.heading("site", text=t("col_site"))
+        self.tree.heading("login", text=t("col_login"))
+        self.tree.heading("email", text=t("col_email"))
+        self.tree.heading("phone", text=t("col_phone"))
+        self.tree.heading("password", text=t("col_password"))
+        self.tree.heading("desc", text=t("col_desc"))
+
+        # Reasonable default column widths
+        self.tree.column("id", width=60, anchor=tk.CENTER)
+        self.tree.column("site", width=200)
+        self.tree.column("login", width=160)
+        self.tree.column("email", width=200)
+        self.tree.column("phone", width=140)
+        self.tree.column("password", width=140, anchor=tk.CENTER)
+        self.tree.column("desc", width=260)
+
+        # Add form labels and frame title
+        self.form.config(text=t("add_frame"))
+        self.lbl_site.config(text=t("site_label"))
+        self.lbl_login.config(text=t("login_label"))
+        self.lbl_email.config(text=t("email_label"))
+        self.lbl_phone.config(text=t("phone_label"))
+        self.lbl_password.config(text=t("password_label"))
+        self.lbl_desc.config(text=t("desc_label"))
+        self.btn_add.config(text=t("add"))
+
+        # Context menu localization
+        self._entry_menu.entryconfig(0, label=t("ctx_copy"))
+        self._entry_menu.entryconfig(1, label=t("ctx_paste"))
+        self._entry_menu.entryconfig(2, label=t("ctx_cut"))
+        self._entry_menu.entryconfig(4, label=t("ctx_select_all"))
+
+        # Refresh table to reflect any heading changes
+        self.refresh_table()
+
+    # --- Clipboard helpers ---
     def _install_clipboard_support(self):
-        # Class bindings for all Entry/ttk.Entry
         for cls in ("TEntry", "Entry"):
             self.bind_class(cls, "<Control-v>", lambda e: e.widget.event_generate("<<Paste>>"))
             self.bind_class(cls, "<Control-Shift-V>", lambda e: e.widget.event_generate("<<Paste>>"))
@@ -509,11 +744,11 @@ class PasswordManagerApp(tk.Tk):
             self.bind_class(cls, "<Button-3>", self._show_entry_menu)
 
         self._entry_menu = tk.Menu(self, tearoff=0)
-        self._entry_menu.add_command(label="Копировать", command=lambda: self.focus_get().event_generate("<<Copy>>"))
-        self._entry_menu.add_command(label="Вставить", command=lambda: self.focus_get().event_generate("<<Paste>>"))
-        self._entry_menu.add_command(label="Вырезать", command=lambda: self.focus_get().event_generate("<<Cut>>"))
+        self._entry_menu.add_command(label=t("ctx_copy"), command=lambda: self.focus_get().event_generate("<<Copy>>"))
+        self._entry_menu.add_command(label=t("ctx_paste"), command=lambda: self.focus_get().event_generate("<<Paste>>"))
+        self._entry_menu.add_command(label=t("ctx_cut"), command=lambda: self.focus_get().event_generate("<<Cut>>"))
         self._entry_menu.add_separator()
-        self._entry_menu.add_command(label="Выделить всё", command=self._select_all_current)
+        self._entry_menu.add_command(label=t("ctx_select_all"), command=self._select_all_current)
 
     def _show_entry_menu(self, event):
         widget = event.widget
@@ -557,7 +792,6 @@ class PasswordManagerApp(tk.Tk):
                     ),
                 )
             except Exception:
-                # Skip corrupted rows silently
                 continue
 
     def add_entry(self):
@@ -568,7 +802,7 @@ class PasswordManagerApp(tk.Tk):
         password = self.var_pass.get()
         desc = self.var_desc.get().strip()
         if not site:
-            messagebox.showerror(APP_NAME, "Введите название сайта")
+            messagebox.showerror(APP_NAME, t("enter_site"))
             return
         if not self.crypto:
             return
@@ -605,7 +839,7 @@ class PasswordManagerApp(tk.Tk):
     def _copy_field_from_selected(self, field: str, success_msg: str):
         entry_id = self.get_selected_entry_id()
         if entry_id is None:
-            messagebox.showinfo(APP_NAME, "Выберите запись в таблице")
+            messagebox.showinfo(APP_NAME, t("select_row"))
             return
         row = self.store.get_entry(entry_id)
         if not row:
@@ -618,29 +852,29 @@ class PasswordManagerApp(tk.Tk):
             self.update()
             messagebox.showinfo(APP_NAME, success_msg)
         except Exception:
-            messagebox.showerror(APP_NAME, "Не удалось расшифровать запись")
+            messagebox.showerror(APP_NAME, t("decrypt_failed"))
 
     def toggle_reveal_selected(self):
         entry_id = self.get_selected_entry_id()
         if entry_id is None:
-            messagebox.showinfo(APP_NAME, "Выберите запись в таблице")
+            messagebox.showinfo(APP_NAME, t("select_row"))
             return
         self._revealed[entry_id] = not self._revealed.get(entry_id, False)
         self.refresh_table()
 
     def copy_password_selected(self):
-        self._copy_field_from_selected("password", "Пароль скопирован в буфер обмена")
+        self._copy_field_from_selected("password", t("pwd_copied"))
 
     def copy_email_selected(self):
-        self._copy_field_from_selected("email", "Email скопирован в буфер обмена")
+        self._copy_field_from_selected("email", t("email_copied"))
 
     def copy_site_selected(self):
-        self._copy_field_from_selected("site", "Название сайта скопировано в буфер обмена")
+        self._copy_field_from_selected("site", t("site_copied"))
 
     def edit_selected(self):
         entry_id = self.get_selected_entry_id()
         if entry_id is None:
-            messagebox.showinfo(APP_NAME, "Выберите запись в таблице")
+            messagebox.showinfo(APP_NAME, t("select_row"))
             return
         row = self.store.get_entry(entry_id)
         if not row:
@@ -648,42 +882,45 @@ class PasswordManagerApp(tk.Tk):
         try:
             data = self.crypto.decrypt_json(b64d(row["nonce"]), b64d(row["data"]))
         except Exception:
-            messagebox.showerror(APP_NAME, "Не удалось расшифровать запись")
+            messagebox.showerror(APP_NAME, t("decrypt_failed"))
             return
 
-        dlg = EditDialog(self, f"Редактировать запись ID {entry_id}", data)
-        if dlg.result_data is None:
+        dlg = EditDialog(self, f"{t('edit')} ID {entry_id}", data)
+        if getattr(dlg, "result_data", None) is None:
             return  # canceled
 
-        # Re-encrypt updated payload and update DB
         try:
             nonce, ct = self.crypto.encrypt_json(dlg.result_data)
             self.store.update_entry_blob(entry_id, b64e(nonce), b64e(ct))
-            # keep current reveal state as-is
             self.refresh_table()
-            messagebox.showinfo(APP_NAME, "Запись обновлена")
+            messagebox.showinfo(APP_NAME, t("update_done"))
         except Exception:
-            messagebox.showerror(APP_NAME, "Не удалось обновить запись")
+            messagebox.showerror(APP_NAME, t("decrypt_failed"))
 
     def delete_selected(self):
         entry_id = self.get_selected_entry_id()
         if entry_id is None:
-            messagebox.showinfo(APP_NAME, "Выберите запись в таблице")
+            messagebox.showinfo(APP_NAME, t("select_row"))
             return
-        if not messagebox.askyesno(APP_NAME, f"Удалить запись ID {entry_id}?"):
+        if not messagebox.askyesno(APP_NAME, t("delete_confirm").format(id=entry_id)):
             return
         self.store.delete_entry(entry_id)
         self._revealed.pop(entry_id, None)
         self.refresh_table()
 
     def on_double_click(self, event):
-        # Toggle reveal on double click row
         self.toggle_reveal_selected()
+
+    # --- Settings ---
+    def open_settings(self):
+        dlg = SettingsDialog(self, LANG)
+        new_lang = getattr(dlg, "result", None)
+        if new_lang and new_lang != LANG:
+            self.set_language(new_lang)
 
 
 def main():
     app = PasswordManagerApp()
-    # app.mainloop() should only run if unlock successful
     if app._unlocked:
         app.mainloop()
 
