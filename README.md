@@ -4,6 +4,10 @@ Universal cross-platform password manager with a 6-digit PIN, encrypted storage,
 **UniPass** is a simple cross‑platform password manager with AES‑GCM encryption and a 6‑digit PIN code.  
 This fork is configured to always store the database file (`unipass.db`) **in the same folder as the program**.
 
+![Python-Unipas-cross-platform-password-manager](unipass.png)
+
+
+
 ## Features
 
 - 6‑digit PIN unlock
