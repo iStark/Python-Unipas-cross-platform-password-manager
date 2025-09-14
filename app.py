@@ -11,8 +11,9 @@ Features
 - Tkinter GUI with a table view and an add form:
   Columns (localized): ID / Site / Login / Email / Phone / Password / Description
 - Buttons (localized): Add, Show/Hide password, Copy password, Copy email,
-           Copy site title, Edit, Delete, Refresh, Settings.
+  Copy site title, Edit, Delete, Refresh, Settings, Show hidden (toggle), Hide, Unhide.
 - Settings dialog: choose and save UI language (ru/en).
+- Hidden flag for entries stored in DB (entries.hidden INTEGER NOT NULL DEFAULT 0).
 
 Dependencies
     pip install cryptography
@@ -77,6 +78,10 @@ L10N: Dict[str, Dict[str, str]] = {
         "edit": "Редактировать",
         "delete": "Удалить запись",
         "settings": "Настройки",
+        "show_hidden": "Показать скрытое",
+        "hide_hidden": "Скрыть скрытое",
+        "hide": "Скрыть",
+        "unhide": "Раскрыть",
 
         # Table headings
         "col_id": "ID",
@@ -141,6 +146,10 @@ L10N: Dict[str, Dict[str, str]] = {
         "edit": "Edit",
         "delete": "Delete",
         "settings": "Settings",
+        "show_hidden": "Show hidden",
+        "hide_hidden": "Hide hidden",
+        "hide": "Hide",
+        "unhide": "Unhide",
 
         "col_id": "ID",
         "col_site": "Site",
@@ -193,7 +202,6 @@ L10N: Dict[str, Dict[str, str]] = {
 }
 
 def t(key: str) -> str:
-    # Возвращаем ключ, если перевода нет
     return L10N.get(LANG, L10N["en"]).get(key, key)
 
 
@@ -305,15 +313,24 @@ class Store:
             );
             """
         )
+        # Initialize schema_info if empty
         cur.execute("SELECT COUNT(*) as c FROM schema_info")
         if cur.fetchone()["c"] == 0:
             cur.execute("INSERT INTO schema_info(version) VALUES (?)", (SCHEMA_VERSION,))
+
+        # --- Migration: add 'hidden' column if missing ---
+        cur.execute("PRAGMA table_info(entries)")
+        cols = {row["name"] for row in cur.fetchall()}
+        if "hidden" not in cols:
+            cur.execute("ALTER TABLE entries ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0")
+
         self.conn.commit()
 
     # --- Meta helpers ---
     def set_meta(self, key: str, value: str):
         self.conn.execute(
-            "INSERT INTO meta(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            "INSERT INTO meta(key, value) VALUES(?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
             (key, value),
         )
         self.conn.commit()
@@ -329,6 +346,7 @@ class Store:
 
     # --- Entry CRUD ---
     def add_entry_blob(self, nonce_b64: str, data_b64: str) -> int:
+        # hidden по умолчанию = 0 (видимая)
         cur = self.conn.execute(
             "INSERT INTO entries(nonce, data) VALUES(?, ?)", (nonce_b64, data_b64)
         )
@@ -341,12 +359,27 @@ class Store:
         )
         self.conn.commit()
 
-    def list_entries(self) -> list[sqlite3.Row]:
-        cur = self.conn.execute("SELECT id, nonce, data FROM entries ORDER BY id DESC")
+    def set_hidden(self, entry_id: int, hidden: bool) -> None:
+        self.conn.execute(
+            "UPDATE entries SET hidden=? WHERE id=?", (1 if hidden else 0, entry_id)
+        )
+        self.conn.commit()
+
+    def list_entries(self, include_hidden: bool = False) -> list[sqlite3.Row]:
+        if include_hidden:
+            cur = self.conn.execute(
+                "SELECT id, nonce, data, hidden FROM entries ORDER BY id DESC"
+            )
+        else:
+            cur = self.conn.execute(
+                "SELECT id, nonce, data, hidden FROM entries WHERE hidden=0 ORDER BY id DESC"
+            )
         return cur.fetchall()
 
     def get_entry(self, entry_id: int) -> Optional[sqlite3.Row]:
-        cur = self.conn.execute("SELECT id, nonce, data FROM entries WHERE id=?", (entry_id,))
+        cur = self.conn.execute(
+            "SELECT id, nonce, data, hidden FROM entries WHERE id=?", (entry_id,)
+        )
         return cur.fetchone()
 
     def delete_entry(self, entry_id: int):
@@ -457,15 +490,9 @@ class SettingsDialog(simpledialog.Dialog):
 
     def body(self, master):
         ttk.Label(master, text=t("lang_label")).grid(row=0, column=0, sticky="w", padx=6, pady=6)
-
-        # Combobox with human-readable labels, but we store code
         self.cb = ttk.Combobox(master, state="readonly", width=18, values=[t("lang_ru"), t("lang_en")])
         self.cb.grid(row=0, column=1, sticky="w", padx=6, pady=6)
-        # map current code -> label
-        if LANG == "ru":
-            self.cb.set(t("lang_ru"))
-        else:
-            self.cb.set(t("lang_en"))
+        self.cb.set(t("lang_ru") if LANG == "ru" else t("lang_en"))
         return self.cb
 
     def buttonbox(self):
@@ -489,8 +516,8 @@ class PasswordManagerApp(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title(APP_NAME)
-        self.geometry("1120x580")
-        self.minsize(950, 540)
+        self.geometry("1180x600")
+        self.minsize(960, 560)
         self.style = ttk.Style(self)
         if sys.platform == "darwin":
             self.style.theme_use("clam")
@@ -498,6 +525,9 @@ class PasswordManagerApp(tk.Tk):
         self.store = Store(DB_PATH)
         self.crypto: Optional[CryptoManager] = None
         self._unlocked = False
+
+        # show_hidden toggle
+        self.show_hidden = False
 
         # Load language from DB (default ru)
         self._init_language()
@@ -519,7 +549,6 @@ class PasswordManagerApp(tk.Tk):
         if lang_from_db in ("ru", "en"):
             LANG = lang_from_db
         else:
-            # default ru; save it to meta so дальнейшие запуски читают явно
             self.store.set_meta("lang", "ru")
             LANG = "ru"
 
@@ -620,20 +649,33 @@ class PasswordManagerApp(tk.Tk):
         self.btn_delete = ttk.Button(top, command=self.delete_selected)
         self.btn_delete.pack(side=tk.LEFT, padx=(6, 0))
 
+        # Hidden controls
+        self.btn_toggle_hidden = ttk.Button(top, command=self.toggle_show_hidden)
+        self.btn_toggle_hidden.pack(side=tk.LEFT, padx=(12, 0))
+
+        self.btn_hide = ttk.Button(top, command=self.hide_selected)
+        self.btn_hide.pack(side=tk.LEFT, padx=(6, 0))
+
+        self.btn_unhide = ttk.Button(top, command=self.unhide_selected)
+        self.btn_unhide.pack(side=tk.LEFT, padx=(6, 0))
+
         # Settings button
         self.btn_settings = ttk.Button(top, command=self.open_settings)
-        self.btn_settings.pack(side=tk.LEFT, padx=(6, 0))
+        self.btn_settings.pack(side=tk.LEFT, padx=(12, 0))
 
         # Table
         columns = ("id", "site", "login", "email", "phone", "password", "desc")
         self.tree = ttk.Treeview(self, columns=columns, show="headings", height=12)
         self.tree.pack(fill=tk.BOTH, expand=True, padx=8)
 
+        # Gray style for hidden rows
+        self.tree.tag_configure("hidden", foreground="#888888")
+
         # Add form
         self.form = ttk.LabelFrame(self)
         self.form.pack(side=tk.BOTTOM, fill=tk.X, padx=8, pady=8)
 
-        # Labels (store refs to update on language change)
+        # Labels
         self.lbl_site = ttk.Label(self.form)
         self.lbl_login = ttk.Label(self.form)
         self.lbl_email = ttk.Label(self.form)
@@ -641,7 +683,6 @@ class PasswordManagerApp(tk.Tk):
         self.lbl_password = ttk.Label(self.form)
         self.lbl_desc = ttk.Label(self.form)
 
-        # Grid labels
         self.lbl_site.grid(row=0, column=0, sticky="e", padx=4, pady=4)
         self.lbl_login.grid(row=0, column=2, sticky="e", padx=4, pady=4)
         self.lbl_email.grid(row=0, column=4, sticky="e", padx=4, pady=4)
@@ -695,6 +736,9 @@ class PasswordManagerApp(tk.Tk):
         self.btn_edit.config(text=t("edit"))
         self.btn_delete.config(text=t("delete"))
         self.btn_settings.config(text=t("settings"))
+        self.btn_toggle_hidden.config(text=t("show_hidden") if not self.show_hidden else t("hide_hidden"))
+        self.btn_hide.config(text=t("hide"))
+        self.btn_unhide.config(text=t("unhide"))
 
         # Table headings
         self.tree.heading("id", text=t("col_id"))
@@ -705,14 +749,14 @@ class PasswordManagerApp(tk.Tk):
         self.tree.heading("password", text=t("col_password"))
         self.tree.heading("desc", text=t("col_desc"))
 
-        # Reasonable default column widths
+        # Column widths
         self.tree.column("id", width=60, anchor=tk.CENTER)
-        self.tree.column("site", width=200)
+        self.tree.column("site", width=220)
         self.tree.column("login", width=160)
         self.tree.column("email", width=200)
         self.tree.column("phone", width=140)
         self.tree.column("password", width=140, anchor=tk.CENTER)
-        self.tree.column("desc", width=260)
+        self.tree.column("desc", width=280)
 
         # Add form labels and frame title
         self.form.config(text=t("add_frame"))
@@ -730,7 +774,7 @@ class PasswordManagerApp(tk.Tk):
         self._entry_menu.entryconfig(2, label=t("ctx_cut"))
         self._entry_menu.entryconfig(4, label=t("ctx_select_all"))
 
-        # Refresh table to reflect any heading changes
+        # Refresh to reflect any heading changes
         self.refresh_table()
 
     # --- Clipboard helpers ---
@@ -771,12 +815,13 @@ class PasswordManagerApp(tk.Tk):
             self.tree.delete(row)
         if not self.crypto:
             return
-        rows = self.store.list_entries()
+        rows = self.store.list_entries(include_hidden=self.show_hidden)
         for r in rows:
             try:
                 data = self.crypto.decrypt_json(b64d(r["nonce"]), b64d(r["data"]))
                 entry_id = int(r["id"])
                 shown_pw = data.get("password") if self._revealed.get(entry_id) else "••••••••"
+                tags = ("hidden",) if int(r["hidden"]) == 1 else ()
                 self.tree.insert(
                     "",
                     tk.END,
@@ -790,6 +835,7 @@ class PasswordManagerApp(tk.Tk):
                         shown_pw,
                         data.get("description", ""),
                     ),
+                    tags=tags,
                 )
             except Exception:
                 continue
@@ -823,7 +869,7 @@ class PasswordManagerApp(tk.Tk):
         self.var_phone.set("")
         self.var_pass.set("")
         self.var_desc.set("")
-        # Make the new one hidden by default
+        # Make the new one hidden by default -> False
         self._revealed[new_id] = False
         self.refresh_table()
 
@@ -909,7 +955,31 @@ class PasswordManagerApp(tk.Tk):
         self.refresh_table()
 
     def on_double_click(self, event):
+        # Двойной клик — как и раньше: показать/скрыть пароль
         self.toggle_reveal_selected()
+
+    # --- Hidden feature handlers ---
+    def toggle_show_hidden(self):
+        self.show_hidden = not self.show_hidden
+        self.apply_locale()  # обновит текст кнопки
+        self.refresh_table()
+
+    def hide_selected(self):
+        entry_id = self.get_selected_entry_id()
+        if entry_id is None:
+            messagebox.showinfo(APP_NAME, t("select_row"))
+            return
+        self.store.set_hidden(entry_id, True)
+        # если сейчас скрытые не показываем — запись пропадёт из таблицы
+        self.refresh_table()
+
+    def unhide_selected(self):
+        entry_id = self.get_selected_entry_id()
+        if entry_id is None:
+            messagebox.showinfo(APP_NAME, t("select_row"))
+            return
+        self.store.set_hidden(entry_id, False)
+        self.refresh_table()
 
     # --- Settings ---
     def open_settings(self):
